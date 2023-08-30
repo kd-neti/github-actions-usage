@@ -1,2 +1,7 @@
 /bin/
 /actions-usage
+token*
+*.bak
+main
+/cache
+cache*
