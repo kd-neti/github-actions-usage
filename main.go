@@ -47,22 +47,13 @@ type RepoSummary struct {
 }
 
 type JsonData struct {
-	Owner string
-	Days  int
-	// TotalRuns     int
-	// TotalJobs     int
-	RunIndex  int
-	TotalRepo int
-	// Actors        map[string]bool
-	// Conclusion    map[string]int
-	// Repos         []*github.Repository
-	// AllRepos      []*github.Repository
+	Owner         string
+	Days          int
+	LastIndex     int
+	TotalRepo     int
 	AllUsageRepos []*UsageRepository
-	// RepoSummary   []*RepoSummary
-	StartDate string
-	EndDate   string
-	// AllUsage      time.Duration
-	// AllBill       time.Duration
+	StartDate     string
+	EndDate       string
 	AllResultData []*ResultData
 }
 
@@ -124,7 +115,7 @@ func main() {
 	var (
 		orgName, userName, token, tokensFile, fromFile, output string
 		days, tokenIdx, minRateLimit                           int
-		verbose, getRateLimit, noCache                         bool
+		verbose, getRateLimit, noCache, silence                bool
 		tokens                                                 []string
 	)
 
@@ -137,6 +128,7 @@ func main() {
 	flag.IntVar(&minRateLimit, "minlimit", 1, "Min rate limit for token to process")
 
 	flag.BoolVar(&verbose, "verbose", false, "Verbose Log")
+	flag.BoolVar(&silence, "silence", false, "Silence Log")
 	flag.BoolVar(&noCache, "nocache", false, "No cache")
 	flag.BoolVar(&getRateLimit, "rate-limit", false, "Verbose Log")
 	// flag.BoolVar(&byRepo, "by-repo", false, "Show breakdown by repository")
@@ -149,8 +141,19 @@ func main() {
 
 	flag.Parse()
 
-	if output != "" && output != "tsv" && output != "csv" {
-		log.Fatal("output must be tsv or csv")
+	switch {
+	case orgName == "" && userName == "" && fromFile == "":
+		log.Fatal("Organization name or username or fromFile is required")
+	case orgName != "" && userName != "" && fromFile == "":
+		log.Fatal("org or username must not be specified at the same time")
+	case token != "" && tokensFile != "":
+		log.Fatal("token or tokens-file must not be specified at the same time")
+	case token == "" && tokensFile == "":
+		log.Fatal("token or tokens-file is required")
+	case verbose && silence:
+		log.Fatal("verbose or silence must not be specified at the same time")
+	case output != "" && output != "tsv" && output != "csv" && output != "file":
+		log.Fatal("Only tsv, csv or file for output")
 
 	}
 
@@ -170,25 +173,14 @@ func main() {
 		// token = strings.TrimSpace(string(tokenBytes))
 	}
 
-	if fromFile == "" && token == "" {
-		log.Fatal("token is required")
-
-	}
-
 	auth := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
 	))
 
-	switch {
-	case orgName == "" && userName == "" && fromFile == "":
-		log.Fatal("Organization name or username or fromFile is required")
-	case orgName != "" && userName != "" && fromFile == "":
-		log.Fatal("Only org or username must be specified at the same time")
-	}
-
 	var (
 		totalRepo       int
-		runIndex        int
+		lastIndex       int
+		nextIndex       int
 		repos, allRepos []*github.Repository
 		allUsageRepos   []*UsageRepository
 		allResultData   []*ResultData
@@ -209,7 +201,8 @@ func main() {
 	page := 0
 
 	totalRepo = 0
-	runIndex = 0
+	lastIndex = 0
+	nextIndex = 0
 
 	var owner string
 	if orgName != "" {
@@ -222,7 +215,6 @@ func main() {
 	// Fetching online
 	if fromFile == "" {
 		// Try to Read data from cache first
-		// log.Printf("File: %s\n", "cache/"+strconv.Itoa(days)+".json")
 		var cacheFile = "cache/" + strconv.Itoa(days) + ".json"
 		var data JsonData
 		if _, err := os.Stat(cacheFile); err == nil && !noCache {
@@ -241,7 +233,8 @@ func main() {
 			allUsageRepos = data.AllUsageRepos
 			allResultData = data.AllResultData
 			totalRepo = data.TotalRepo
-			runIndex = data.RunIndex + 1
+			lastIndex = data.LastIndex
+			nextIndex = data.LastIndex + 1
 
 		}
 
@@ -249,18 +242,23 @@ func main() {
 			allUsageRepos = nil
 			allResultData = nil
 			totalRepo = 0
-			runIndex = 0
+			lastIndex = -1
+			nextIndex = 0
 
 			// Fetching from github api
 			if verbose {
-				fmt.Printf("Fetching last %d days of data (created>=%s)\n", days, created.Format("2006-01-02"))
+				if noCache {
+					log.Printf("Force no cache\n")
+				}
+
+				log.Printf("Fetching last %d days of data (created>=%s)\n", days, created.Format("2006-01-02"))
 			}
 			rateLimit, _, err = client.RateLimits(ctx)
 			if err != nil {
 				log.Fatal(err)
 			}
 			if verbose {
-				log.Printf("Rate Limit Remain %d\n", rateLimit.Core.Remaining)
+				log.Printf("Rate Limit Remain: %d\n", rateLimit.Core.Remaining)
 			}
 			checkRateLimit(rateLimit.Core.Remaining, minRateLimit, tokens, &tokenIdx, &client, verbose)
 
@@ -307,17 +305,28 @@ func main() {
 				// break
 				page = res.NextPage
 			}
+
+			totalRepo = len(allUsageRepos)
 		}
 
 		if verbose {
-			log.Printf("Total repos: %d", len(allUsageRepos))
+			log.Printf("Total repos: %d", totalRepo)
+			log.Printf("Last run repo index: %d", lastIndex)
+			if lastIndex < totalRepo-1 {
+				log.Printf("Continue at repo index: %d", nextIndex)
+
+			} else if lastIndex > -1 && lastIndex == totalRepo-1 {
+				log.Printf("Nothing to do")
+
+			}
+
 		}
 
-		for i := runIndex; i < len(allUsageRepos); i++ {
+		for i := nextIndex; i < len(allUsageRepos); i++ {
 			repo := allUsageRepos[i]
 			if verbose {
-				log.Printf("Get[%d]: %s", i+1, repo.FullName)
-			} else {
+				log.Printf("Get[%d]: %s", i, repo.FullName)
+			} else if !silence {
 				fmt.Printf("\033[2K\rRepos: %d/%d", i+1, len(allUsageRepos))
 			}
 
@@ -325,7 +334,7 @@ func main() {
 			for {
 				if verbose {
 					log.Printf("Listing workflows for: %s page: %d", repo.FullName, page)
-				} else {
+				} else if !silence {
 					fmt.Printf("\033[2K\rRepos: %d/%d - Listing workflows: %d", i+1, len(allUsageRepos), page)
 				}
 
@@ -334,7 +343,7 @@ func main() {
 					log.Fatal(err)
 				}
 				if verbose {
-					log.Printf("Rate Limit Remain %d\n", rateLimit.Core.Remaining)
+					log.Printf("Rate Limit Remain: %d\n", rateLimit.Core.Remaining)
 				}
 				checkRateLimit(rateLimit.Core.Remaining, minRateLimit, tokens, &tokenIdx, &client, verbose)
 
@@ -391,7 +400,7 @@ func main() {
 					log.Fatal(err)
 				}
 				if verbose {
-					log.Printf("Rate Limit Remain %d\n", rateLimit.Core.Remaining)
+					log.Printf("Rate Limit Remain: %d\n", rateLimit.Core.Remaining)
 				}
 				checkRateLimit(rateLimit.Core.Remaining, minRateLimit, tokens, &tokenIdx, &client, verbose)
 
@@ -400,10 +409,10 @@ func main() {
 				var runs *github.WorkflowRuns
 				if verbose {
 					log.Printf("Listing workflow runs for: %s page %d", repo.FullName, page)
-				} else {
+				} else if !silence {
 					fmt.Printf("\033[2K\rRepos: %d/%d - Listing workflow runs: %d", i+1, len(allRepos), page)
-
 				}
+
 				if orgName != "" {
 					runs, res, err = client.Actions.ListRepositoryWorkflowRuns(ctx, orgName, repo.Name, opts)
 
@@ -474,7 +483,7 @@ func main() {
 						log.Fatal(err)
 					}
 					if verbose {
-						log.Printf("Rate Limit Remain %d\n", rateLimit.Core.Remaining)
+						log.Printf("Rate Limit Remain: %d\n", rateLimit.Core.Remaining)
 					}
 					checkRateLimit(rateLimit.Core.Remaining, minRateLimit, tokens, &tokenIdx, &client, verbose)
 
@@ -539,15 +548,15 @@ func main() {
 
 			// Write to cache when get all data for each repo
 			if verbose {
-				log.Printf("Write cache runIndex: %d\n", i)
+				log.Printf("Done[%d] Write cache runIndex: %d\n", i, i)
 			}
 			enddate := time.Now()
 
 			data := JsonData{
 				// TotalRuns:    totalRuns,
 				// TotalJobs:    totalJobs,
-				RunIndex:  i,
-				TotalRepo: len(allRepos),
+				LastIndex: i,
+				TotalRepo: len(allUsageRepos),
 				// AllRepos:        allRepos,
 				AllUsageRepos: allUsageRepos,
 				// Actors:        actors,
@@ -567,6 +576,9 @@ func main() {
 			} else {
 				// fmt.Println(string(jsonData))
 				err = os.MkdirAll("cache", os.ModePerm)
+				if err != nil {
+					fmt.Printf("Error: %s", err.Error())
+				}
 				err = os.WriteFile(cacheFile, jsonData, 0644)
 				if err != nil {
 					fmt.Printf("Error: %s", err.Error())
@@ -580,7 +592,7 @@ func main() {
 			log.Fatal(err)
 		}
 		if verbose {
-			log.Printf("Rate Limit Remain %d\n", rateLimit.Core.Remaining)
+			log.Printf("Rate Limit Remain: %d\n", rateLimit.Core.Remaining)
 		}
 
 	} else if fromFile != "" {
@@ -630,7 +642,7 @@ func main() {
 
 		for _, r := range allResultData {
 			idx := slices.IndexFunc(predata.AllResultData, func(rd *ResultData) bool {
-				return r.RepositorySlug == rd.RepositorySlug && r.ActionsWorkflow == rd.ActionsWorkflow
+				return r.RepositorySlug == rd.RepositorySlug && r.ActionsWorkflow == rd.ActionsWorkflow && r.Owner == rd.Owner
 			})
 			if idx != -1 {
 				r.Quantity = r.Quantity - predata.AllResultData[idx].Quantity
@@ -655,7 +667,7 @@ func main() {
 		for _, r := range allResultData {
 			if r.Quantity > 0 {
 				fmt.Fprintf(w, "%s,%s,%s,%d,%s,%d,%s,%s,%s,%s,%d,%s\n",
-					r.Date.Format("2006-01-02"),
+					r.Date.Format(format),
 					r.Product,
 					r.SKU,
 					r.Quantity,
@@ -687,7 +699,7 @@ func main() {
 		for _, r := range allResultData {
 			if r.Quantity > 0 {
 				fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%d\t%s\t%s\t%s\t%d\t%s\n",
-					r.Date.Format("2006-01-02"),
+					r.Date.Format(format),
 					// r.Product,
 					r.SKU[10:],
 					r.Quantity,
@@ -703,6 +715,46 @@ func main() {
 			}
 		}
 		w.Flush()
+
+	} else if output == "file" {
+		fmt.Printf("\033[2K\r")
+		sort.Slice(allResultData, func(i, j int) bool {
+			return allResultData[i].Quantity > allResultData[j].Quantity
+
+		})
+
+		f, err := os.Create("report-" + today.Format(format) + ".csv")
+		if err != nil {
+			fmt.Printf("Error: %s", err.Error())
+		}
+		defer f.Close()
+
+		_, err = fmt.Fprintln(f, "Date,Product,SKU,Quantity,Unit Type,Multiplier,Owner,Repository Slug,Cost Center,Project,Runs,Actions Workflow")
+		if err != nil {
+			fmt.Printf("Error: %s", err.Error())
+		}
+		for _, r := range allResultData {
+			if r.Quantity > 0 {
+				fmt.Fprintf(f, "%s,%s,%s,%d,%s,%d,%s,%s,%s,%s,%d,%s\n",
+					r.Date.Format(format),
+					r.Product,
+					r.SKU,
+					r.Quantity,
+					r.UnitType,
+					r.Multiplier,
+					r.Owner,
+					r.RepositorySlug,
+					r.CostCenter,
+					r.Project,
+					r.Runs,
+					r.ActionsWorkflow,
+				)
+			}
+		}
+
+		if verbose {
+			log.Printf("Write report to file: %s\n", "report-"+today.Format(format)+".csv")
+		}
 
 	}
 
