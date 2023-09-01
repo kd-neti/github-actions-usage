@@ -115,7 +115,7 @@ func main() {
 	var (
 		orgName, userName, token, tokensFile, fromFile, output string
 		days, tokenIdx, minRateLimit                           int
-		verbose, getRateLimit, noCache, silence                bool
+		verbose, getRateLimit, noCache, silence, utc           bool
 		tokens                                                 []string
 	)
 
@@ -127,6 +127,7 @@ func main() {
 	flag.StringVar(&output, "output", "tsv", "output format [tsv, csv]")
 	flag.IntVar(&minRateLimit, "minlimit", 1, "Min rate limit for token to process")
 
+	flag.BoolVar(&utc, "utc", false, "Use UTC timezone")
 	flag.BoolVar(&verbose, "verbose", false, "Verbose Log")
 	flag.BoolVar(&silence, "silence", false, "Silence Log")
 	flag.BoolVar(&noCache, "nocache", false, "No cache")
@@ -190,10 +191,15 @@ func main() {
 	var err error
 	var rateLimit *github.RateLimits
 
+	if utc {
+		time.Local = time.UTC
+	}
+
 	client := github.NewClient(auth)
 	today := time.Now()
 	days = today.Day()
-	created := today.AddDate(0, 0, -days+1)
+	// created := today.AddDate(0, 0, -days+1)
+	created := today
 	format := "2006-01-02"
 	createdQuery := ">=" + created.Format(format)
 
@@ -251,7 +257,7 @@ func main() {
 					log.Printf("Force no cache\n")
 				}
 
-				log.Printf("Fetching last %d days of data (created>=%s)\n", days, created.Format("2006-01-02"))
+				log.Printf("Fetching last %d days of data (created>=%s)\n", 1, created.Format("2006-01-02"))
 			}
 			rateLimit, _, err = client.RateLimits(ctx)
 			if err != nil {
@@ -646,7 +652,7 @@ func main() {
 			})
 			if idx != -1 {
 				r.Quantity = r.Quantity - predata.AllResultData[idx].Quantity
-				r.Runs = r.Runs - predata.AllResultData[idx].Runs
+				// r.Runs = r.Runs - predata.AllResultData[idx].Runs
 			}
 
 		}
