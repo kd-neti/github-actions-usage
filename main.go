@@ -198,8 +198,7 @@ func main() {
 	client := github.NewClient(auth)
 	today := time.Now()
 	days = today.Day()
-	// created := today.AddDate(0, 0, -days+1)
-	created := today
+	created := today.AddDate(0, 0, -days+1)
 	format := "2006-01-02"
 	createdQuery := ">=" + created.Format(format)
 
@@ -257,7 +256,7 @@ func main() {
 					log.Printf("Force no cache\n")
 				}
 
-				log.Printf("Fetching last %d days of data (created>=%s)\n", 1, created.Format("2006-01-02"))
+				log.Printf("Fetching last %d days of data (created>=%s)\n", days, created.Format("2006-01-02"))
 			}
 			rateLimit, _, err = client.RateLimits(ctx)
 			if err != nil {
@@ -629,9 +628,9 @@ func main() {
 
 	// Get previos data
 	var lastDays = days - 1
-	if lastDays < 1 {
-		lastDays = 1
-	}
+	// if lastDays < 1 {
+	// 	lastDays = 1
+	// }
 	var lastCacheFile = "cache/" + strconv.Itoa(lastDays) + ".json"
 	var predata JsonData
 	if _, err := os.Stat(lastCacheFile); err == nil {
@@ -652,7 +651,7 @@ func main() {
 			})
 			if idx != -1 {
 				r.Quantity = r.Quantity - predata.AllResultData[idx].Quantity
-				// r.Runs = r.Runs - predata.AllResultData[idx].Runs
+				r.Runs = r.Runs - predata.AllResultData[idx].Runs
 			}
 
 		}
