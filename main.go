@@ -115,7 +115,7 @@ func main() {
 	var (
 		orgName, userName, token, tokensFile, fromFile, output string
 		days, tokenIdx, minRateLimit                           int
-		verbose, getRateLimit, noCache, silence, utc           bool
+		verbose, getRateLimit, noCache, silent, utc            bool
 		tokens                                                 []string
 	)
 
@@ -129,7 +129,7 @@ func main() {
 
 	flag.BoolVar(&utc, "utc", false, "Use UTC timezone")
 	flag.BoolVar(&verbose, "verbose", false, "Verbose Log")
-	flag.BoolVar(&silence, "silence", false, "Silence Log")
+	flag.BoolVar(&silent, "silent", false, "silent Log")
 	flag.BoolVar(&noCache, "nocache", false, "No cache")
 	flag.BoolVar(&getRateLimit, "rate-limit", false, "Verbose Log")
 	// flag.BoolVar(&byRepo, "by-repo", false, "Show breakdown by repository")
@@ -151,8 +151,8 @@ func main() {
 		log.Fatal("token or tokens-file must not be specified at the same time")
 	case token == "" && tokensFile == "":
 		log.Fatal("token or tokens-file is required")
-	case verbose && silence:
-		log.Fatal("verbose or silence must not be specified at the same time")
+	case verbose && silent:
+		log.Fatal("verbose or silent must not be specified at the same time")
 	case output != "" && output != "tsv" && output != "csv" && output != "file":
 		log.Fatal("Only tsv, csv or file for output")
 
@@ -197,10 +197,12 @@ func main() {
 
 	client := github.NewClient(auth)
 	today := time.Now()
-	days = today.Day()
-	created := today.AddDate(0, 0, -days+1)
+	// days = today.Day()
+	days = 1
+	// created := today.AddDate(0, 0, -days+1)
+	created := today
 	format := "2006-01-02"
-	createdQuery := ">=" + created.Format(format)
+	createdQuery := ">=" + today.Format(format)
 
 	ctx := context.Background()
 	page := 0
@@ -331,7 +333,7 @@ func main() {
 			repo := allUsageRepos[i]
 			if verbose {
 				log.Printf("Get[%d]: %s", i, repo.FullName)
-			} else if !silence {
+			} else if !silent {
 				fmt.Printf("\033[2K\rRepos: %d/%d", i+1, len(allUsageRepos))
 			}
 
@@ -339,7 +341,7 @@ func main() {
 			for {
 				if verbose {
 					log.Printf("Listing workflows for: %s page: %d", repo.FullName, page)
-				} else if !silence {
+				} else if !silent {
 					fmt.Printf("\033[2K\rRepos: %d/%d - Listing workflows: %d", i+1, len(allUsageRepos), page)
 				}
 
@@ -414,7 +416,7 @@ func main() {
 				var runs *github.WorkflowRuns
 				if verbose {
 					log.Printf("Listing workflow runs for: %s page %d", repo.FullName, page)
-				} else if !silence {
+				} else if !silent {
 					fmt.Printf("\033[2K\rRepos: %d/%d - Listing workflow runs: %d", i+1, len(allRepos), page)
 				}
 
@@ -622,38 +624,6 @@ func main() {
 		if verbose {
 			log.Printf("Reading data from file: %s \n", fromFile)
 			fmt.Printf("Fetching last %d days of data (created>=%s - %s)\n", days, data.StartDate, data.EndDate)
-		}
-
-	}
-
-	// Get previos data
-	var lastDays = days - 1
-	// if lastDays < 1 {
-	// 	lastDays = 1
-	// }
-	var lastCacheFile = "cache/" + strconv.Itoa(lastDays) + ".json"
-	var predata JsonData
-	if _, err := os.Stat(lastCacheFile); err == nil {
-		jsonBytes, err := os.ReadFile(lastCacheFile)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		err = json.Unmarshal(jsonBytes, &predata)
-		if err != nil {
-			// panic
-			log.Fatal(err)
-		}
-
-		for _, r := range allResultData {
-			idx := slices.IndexFunc(predata.AllResultData, func(rd *ResultData) bool {
-				return r.RepositorySlug == rd.RepositorySlug && r.ActionsWorkflow == rd.ActionsWorkflow && r.Owner == rd.Owner
-			})
-			if idx != -1 {
-				r.Quantity = r.Quantity - predata.AllResultData[idx].Quantity
-				r.Runs = r.Runs - predata.AllResultData[idx].Runs
-			}
-
 		}
 
 	}
