@@ -274,14 +274,8 @@ func main() {
 
 				log.Printf("Fetching last %d days of data (created=%s)\n", days, created.Format("2006-01-02"))
 			}
-			rateLimit, _, err = client.RateLimits(ctx)
-			if err != nil {
-				log.Fatal(err)
-			}
-			if verbose {
-				log.Printf("Rate Limit Remain: %d\n", rateLimit.Core.Remaining)
-			}
-			checkRateLimit(rateLimit.Core.Remaining, minRateLimit, tokens, &tokenIdx, &client, verbose)
+
+			checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
 
 			for {
 				if verbose {
@@ -358,15 +352,7 @@ func main() {
 				} else if !silent {
 					fmt.Printf("\033[2K\rRepos: %d/%d - Listing workflows: %d", i+1, len(allUsageRepos), page)
 				}
-
-				rateLimit, _, err = client.RateLimits(ctx)
-				if err != nil {
-					log.Fatal(err)
-				}
-				if verbose {
-					log.Printf("Rate Limit Remain: %d\n", rateLimit.Core.Remaining)
-				}
-				checkRateLimit(rateLimit.Core.Remaining, minRateLimit, tokens, &tokenIdx, &client, verbose)
+				checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
 
 				var wkflow *github.Workflows
 				opts := &github.ListOptions{Page: page, PerPage: 100}
@@ -385,7 +371,10 @@ func main() {
 				}
 
 				if err != nil {
-					log.Fatal(err)
+					log.Print(err)
+					useNextToken(tokens, &tokenIdx, &client, ctx, verbose)
+					// i--
+					continue
 				}
 
 				for _, w := range wkflow.Workflows {
@@ -415,15 +404,7 @@ func main() {
 
 			page = 0
 			for {
-
-				rateLimit, _, err = client.RateLimits(ctx)
-				if err != nil {
-					log.Fatal(err)
-				}
-				if verbose {
-					log.Printf("Rate Limit Remain: %d\n", rateLimit.Core.Remaining)
-				}
-				checkRateLimit(rateLimit.Core.Remaining, minRateLimit, tokens, &tokenIdx, &client, verbose)
+				checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
 
 				opts := &github.ListWorkflowRunsOptions{Created: createdQuery, ListOptions: github.ListOptions{Page: page, PerPage: 100}}
 
@@ -449,7 +430,9 @@ func main() {
 				}
 
 				if err != nil {
-					log.Fatal(err)
+					log.Print(err)
+					useNextToken(tokens, &tokenIdx, &client, ctx, verbose)
+
 				}
 
 				workflowRuns = append(workflowRuns, runs.WorkflowRuns...)
@@ -517,14 +500,7 @@ func main() {
 								if verbose {
 									log.Printf("Get WorkflowRunUsage for RunID: %d", run.ID)
 								}
-								rateLimit, _, err = client.RateLimits(ctx)
-								if err != nil {
-									log.Fatal(err)
-								}
-								if verbose {
-									log.Printf("Rate Limit Remain: %d\n", rateLimit.Core.Remaining)
-								}
-								checkRateLimit(rateLimit.Core.Remaining, minRateLimit, tokens, &tokenIdx, &client, verbose)
+								checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
 
 								var workflowRunUsage *github.WorkflowRunUsage
 
@@ -601,14 +577,8 @@ func main() {
 						if verbose {
 							log.Printf("Get WorkflowUsage for: %s", workflow.Path)
 						}
-						rateLimit, _, err = client.RateLimits(ctx)
-						if err != nil {
-							log.Fatal(err)
-						}
-						if verbose {
-							log.Printf("Rate Limit Remain: %d\n", rateLimit.Core.Remaining)
-						}
-						checkRateLimit(rateLimit.Core.Remaining, minRateLimit, tokens, &tokenIdx, &client, verbose)
+
+						checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
 
 						runs := 0
 						for _, run := range allUsageRepos[i].WorkflowRuns {
@@ -877,32 +847,66 @@ func delete_empty(s []string) []string {
 	}
 	return r
 }
+func useNextToken(tokens []string, tokenIdx *int, client **github.Client, ctx context.Context, verbose bool) {
+	if *tokenIdx < len(tokens)-1 {
+		if verbose {
+			log.Printf("Use Next TOKEN ***\n")
+			// log.Printf("%s\n", tokens[*tokenIdx])
 
-func checkRateLimit(rateLimit int, minRateLimit int, tokens []string, tokenIdx *int, client **github.Client, verbose bool) {
-	if rateLimit < minRateLimit {
+		}
+		*tokenIdx += 1
+		token := tokens[*tokenIdx]
+		auth := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: token},
+		))
+		*client = github.NewClient(auth)
+	} else {
+		if verbose {
+			log.Printf("No token left wait next hour\n")
+		}
+		os.Exit(0)
+	}
+}
+func checkRateLimit(minRateLimit int, tokens []string, tokenIdx *int, client **github.Client, ctx context.Context, verbose bool) {
+	token := tokens[*tokenIdx]
+	auth := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: token},
+	))
+	newclient := github.NewClient(auth)
+
+	chkrateLimit, _, err := newclient.RateLimits(ctx)
+	for {
+
+		if err != nil {
+			if *tokenIdx >= len(tokens)-1 {
+				log.Fatal(err)
+
+			} else {
+				if verbose {
+					log.Print(err)
+				}
+				useNextToken(tokens, tokenIdx, client, ctx, verbose)
+				newtokenIdx := *tokenIdx + 1
+				token := tokens[newtokenIdx]
+				auth := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(
+					&oauth2.Token{AccessToken: token},
+				))
+				newclient = github.NewClient(auth)
+				chkrateLimit, _, err = newclient.RateLimits(ctx)
+
+			}
+		} else {
+			if verbose {
+				log.Printf("Rate Limit Remain: %d\n", chkrateLimit.Core.Remaining)
+			}
+			break
+		}
+	}
+	if chkrateLimit.Core.Remaining < minRateLimit {
 		if verbose {
 			log.Printf("Token has rate limit less than %d\n", minRateLimit)
 		}
-		if *tokenIdx < len(tokens)-1 {
-			*tokenIdx += 1
-			if verbose {
-				log.Printf("Use next token\n")
-				log.Printf("%s\n", tokens[*tokenIdx])
-
-			}
-
-			token := tokens[*tokenIdx]
-			auth := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(
-				&oauth2.Token{AccessToken: token},
-			))
-			*client = github.NewClient(auth)
-			// return client
-		} else {
-			if verbose {
-				log.Printf("No token left wait next hour\n")
-			}
-			os.Exit(0)
-		}
+		useNextToken(tokens, tokenIdx, client, ctx, verbose)
 
 	}
 }
