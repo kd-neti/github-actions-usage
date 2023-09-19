@@ -791,7 +791,7 @@ func main() {
 
 		reportFileName := "report-" + today.Format(format) + ".csv"
 		if dateString != "" {
-			reportFileName = "report-" + today.Format(format) + "-noaccu.csv"
+			reportFileName = "report-" + today.Format(format) + "-nonaccum.csv"
 		}
 		f, err := os.Create(reportFileName)
 		if err != nil {
