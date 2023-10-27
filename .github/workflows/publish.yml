@@ -8,6 +8,16 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      checks: write
+
+      actions: read
+      issues: read
+      packages: write
+      pull-requests: read
+      repository-projects: read
+      statuses: read
     steps:
       - uses: actions/checkout@master
         with:
