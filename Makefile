@@ -21,7 +21,7 @@ test:
 
 .PHONY: e2e
 e2e:
-	CGO_ENABLED=0 go test github.com/self-actuated/actions-usage/pkg/get -cover --tags e2e -v
+	CGO_ENABLED=0 go test github.com/corp-ais/actions-usage/pkg/get -cover --tags e2e -v
 
 .PHONY: dist
 dist:

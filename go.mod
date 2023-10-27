@@ -1,4 +1,4 @@
-module github.com/self-actuated/actions-usage
+module github.com/corp-ais/actions-usage
 
 go 1.19
 

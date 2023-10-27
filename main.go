@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -114,10 +115,10 @@ var build string
 func main() {
 
 	var (
-		orgName, userName, token, tokensFile, fromFile, output, dateString string
-		days, tokenIdx, minRateLimit                                       int
-		verbose, getRateLimit, noCache, silent, utc, showVersion           bool
-		tokens                                                             []string
+		orgName, userName, token, tokensFile, fromFile, output, dateString                  string
+		days, tokenIdx, minRateLimit                                                        int
+		verbose, getRateLimit, noCache, silent, utc, showVersion, checkToken, includeNoTags bool
+		tokens                                                                              []string
 	)
 
 	var (
@@ -134,7 +135,7 @@ func main() {
 	flag.StringVar(&token, "token", "", "GitHub token")
 	flag.StringVar(&tokensFile, "tokens-file", "", "Path to the file containing the GitHub tokens")
 	flag.StringVar(&fromFile, "from-file", "", "Path to the json file to process")
-	flag.StringVar(&output, "output", "tsv", "output format [tsv, csv]")
+	flag.StringVar(&output, "output", "tsv", "output format [tsv, csv, md]")
 	flag.StringVar(&dateString, "date", "", "Date to get data")
 	flag.IntVar(&minRateLimit, "minlimit", 1, "Min rate limit for token to process")
 
@@ -144,6 +145,8 @@ func main() {
 	flag.BoolVar(&noCache, "nocache", false, "No cache")
 	flag.BoolVar(&getRateLimit, "rate-limit", false, "Verbose Log")
 	flag.BoolVar(&showVersion, "version", false, "Version")
+	flag.BoolVar(&checkToken, "check-token", false, "Check token(s)")
+	flag.BoolVar(&includeNoTags, "include-notags", false, "Check token(s)")
 	// flag.BoolVar(&byRepo, "by-repo", false, "Show breakdown by repository")
 	// flag.BoolVar(&byTeam, "by-team", false, "Show breakdown by team")
 
@@ -156,7 +159,130 @@ func main() {
 
 	switch {
 	case showVersion:
-		fmt.Printf("version=%s, build=%s", version, build)
+		fmt.Printf("version=%s, build=%s\n", version, build)
+		os.Exit(0)
+	case checkToken:
+		// fmt.Printf("Checking\n")
+		if token == "" && tokensFile == "" {
+			log.Fatal("token or tokens-file is required")
+
+		} else if tokensFile != "" {
+			tokenBytes, err := os.ReadFile(tokensFile)
+			if err != nil {
+				log.Fatal(err)
+			}
+			tokens = strings.Split(string(tokenBytes), "\n")
+			tokens = delete_empty(tokens)
+
+		} else {
+			tokens = []string{token}
+		}
+		todayLocal := time.Now()
+		today := todayLocal
+		time.Local = time.UTC
+		todayUTC := time.Now()
+
+		var layout = "2006-01-02 15:04:05 +0700"
+
+		fmt.Printf("Check Time UTC: %s\n", todayUTC.Format("2006-01-02 15:04:05 MST"))
+		fmt.Printf("Check Time LOC: %s\n\n", todayLocal.Format(layout))
+
+		w := tabwriter.NewWriter(os.Stdout, 4, 5, 1, ' ', tabwriter.TabIndent)
+		if output == "tsv" {
+			fmt.Fprintln(w, "Token\tCode\tExpireDate\tRemainHour\tResult")
+			fmt.Fprintln(w, "-----\t------\t-------------------------\t---------------------\t------")
+
+		} else if output == "md" {
+			fmt.Fprintln(w, "|Token|Code|Expired Date|Remaining Hours|Result|")
+			fmt.Fprintln(w, "|---|---|---|---|---|")
+
+		}
+
+		var overallResult = "Error"
+		for idx, tk := range tokens {
+
+			// fmt.Printf("Token[%d]: \n", idx+1)
+			var statusCode = ""
+			var expireString = ""
+			var result = "✅OK"
+			var diff time.Duration
+			requestURL := "https://api.github.com/user"
+
+			req, err := http.NewRequest(http.MethodGet, requestURL, nil)
+			if err != nil {
+				// fmt.Printf("client: could not create request: %s\n", err)
+				statusCode = "Err"
+				result = "N/a"
+				// os.Exit(1)
+			}
+			req.Header.Set("Authorization", "Bearer "+tk)
+
+			client := http.Client{
+				Timeout: 30 * time.Second,
+			}
+
+			res, err := client.Do(req)
+			if err != nil {
+				// fmt.Printf("client: error making http request: %s\n", err)
+				statusCode = "Err"
+				result = "N/a"
+				// os.Exit(1)
+			}
+			// fmt.Printf("status code: %d\n", res.StatusCode)
+			statusCode = fmt.Sprint(res.StatusCode)
+			expireString = res.Header.Get("github-authentication-token-expiration")
+			// fmt.Printf("github-authentication-token-expiration: %s\n", res.Header.Get("github-authentication-token-expiration"))
+
+			if expireString != "" {
+
+				if strings.Contains(expireString, "UTC") {
+					layout = "2006-01-02 15:04:05 MST"
+					today = todayUTC
+				} else {
+					layout = "2006-01-02 15:04:05 +0700"
+					today = todayLocal
+
+				}
+
+				expireTime, errParse := time.Parse(layout, expireString)
+				if errParse != nil {
+					// panic
+					// log.Fatal(errParse)
+					result = "Can't parse"
+					diff = 0
+				} else {
+					diff = expireTime.Sub(today)
+
+				}
+
+				// fmt.Printf("token expiration date: %s\n", expireTime)
+				// fmt.Printf("expiration in: %s\n", diff)
+			}
+
+			if diff <= 0 {
+				result = "❌Expired"
+			} else if diff.Hours() > 0 && diff.Hours() < 72 {
+				result = "⚠️Warning"
+				if overallResult != "✅OK" {
+					overallResult = "⚠️Warning"
+				}
+			} else {
+				overallResult = "✅OK"
+			}
+			if output == "tsv" {
+				fmt.Fprintf(w, "%d\t%s\t%s\t%.f\t%s\n", idx+1, statusCode, expireString, diff.Hours(), result)
+			} else if output == "md" {
+				fmt.Fprintf(w, "|%d|%s|%s|%.f|%s|\n", idx+1, statusCode, expireString, diff.Hours(), result)
+			}
+
+		}
+		w.Flush()
+		if output == "tsv" {
+			fmt.Printf("\n----------------------\nOverall Result: %s\n----------------------\n", overallResult)
+
+		} else if output == "md" {
+			fmt.Printf("\n> Overall Result: %s\n", overallResult)
+		}
 		os.Exit(0)
 	case orgName == "" && userName == "" && fromFile == "":
 		log.Fatal("Organization name or username or fromFile is required")
@@ -332,134 +458,18 @@ func main() {
 
 			} else if lastIndex > -1 && lastIndex == totalRepo-1 {
 				log.Printf("Nothing to do")
-
+				os.Exit(0)
 			}
 
 		}
 
 		for i := nextIndex; i < len(allUsageRepos); i++ {
 			repo := allUsageRepos[i]
-			if verbose {
-				log.Printf("Get[%d]: %s", i, repo.FullName)
-			} else if !silent {
-				fmt.Printf("\033[2K\rRepos: %d/%d", i+1, len(allUsageRepos))
-			}
-
-			page := 0
-			for {
-				if verbose {
-					log.Printf("Listing workflows for: %s page: %d", repo.FullName, page)
-				} else if !silent {
-					fmt.Printf("\033[2K\rRepos: %d/%d - Listing workflows: %d", i+1, len(allUsageRepos), page)
-				}
-				checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
-
-				var wkflow *github.Workflows
-				opts := &github.ListOptions{Page: page, PerPage: 100}
-				if orgName != "" {
-					wkflow, res, err = client.Actions.ListWorkflows(ctx, orgName, repo.Name, opts)
-
-				}
-
-				if userName != "" {
-					realOwner := userName
-					if userName != repo.Owner.Login {
-						realOwner = repo.Owner.Login
-					}
-					wkflow, res, err = client.Actions.ListWorkflows(ctx, realOwner, repo.Name, opts)
-
-				}
-
-				if err != nil {
-					log.Print(err)
-					useNextToken(tokens, &tokenIdx, &client, ctx, verbose)
-					// i--
-					continue
-				}
-
-				for _, w := range wkflow.Workflows {
-					var wflow *UsageWorkflow
-					jsonData, _ := json.Marshal(w)
-					err = json.Unmarshal(jsonData, &wflow)
-					if err != nil {
-						log.Fatal(err)
-					}
-					allUsageRepos[i].Workflows = append(allUsageRepos[i].Workflows, wflow)
-
-				}
-
-				if res.NextPage == 0 {
-					break
-				}
-
-				// break
-				page = res.NextPage
-			}
-
-			if verbose {
-				log.Printf("Found %d workflows for %s", len(allUsageRepos[i].Workflows), repo.FullName)
-			}
-
-			workflowRuns := []*github.WorkflowRun{}
-
-			page = 0
-			for {
-				checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
-
-				opts := &github.ListWorkflowRunsOptions{Created: createdQuery, ListOptions: github.ListOptions{Page: page, PerPage: 100}}
-
-				var runs *github.WorkflowRuns
-				if verbose {
-					log.Printf("Listing workflow runs for: %s page %d", repo.FullName, page)
-				} else if !silent {
-					fmt.Printf("\033[2K\rRepos: %d/%d - Listing workflow runs: %d", i+1, len(allRepos), page)
-				}
-
-				if orgName != "" {
-					runs, res, err = client.Actions.ListRepositoryWorkflowRuns(ctx, orgName, repo.Name, opts)
-
-				}
-				if userName != "" {
-					realOwner := userName
-					// if user is a member of repository
-					if userName != repo.Owner.Login {
-						realOwner = repo.Owner.Login
-					}
-					runs, res, err = client.Actions.ListRepositoryWorkflowRuns(ctx, realOwner, repo.Name, opts)
-
-				}
-
-				if err != nil {
-					log.Print(err)
-					useNextToken(tokens, &tokenIdx, &client, ctx, verbose)
-
-				}
-
-				workflowRuns = append(workflowRuns, runs.WorkflowRuns...)
-
-				if len(workflowRuns) == 0 {
-					break
-				}
-
-				if res.NextPage == 0 {
-					break
-				}
-
-				page = res.NextPage
-			}
-			if verbose {
-				log.Printf("Found %d workflow runs for %s/%s", len(workflowRuns), owner, repo.Name)
-			}
-
-			record, _ := json.Marshal(workflowRuns)
-			var usageWorkflows []*UsageWorkflowRun
-			json.Unmarshal([]byte(record), &usageWorkflows)
-			allUsageRepos[i].WorkflowRuns = usageWorkflows
-
 			CostCenter := "N/a"
 			Project := "N/a"
-			if len(allUsageRepos[i].Topics) > 0 {
-				for _, topic := range allUsageRepos[i].Topics {
+
+			if len(repo.Topics) > 0 {
+				for _, topic := range repo.Topics {
 					c := strings.Index(topic, "costcenter-")
 					if c == 0 {
 						CostCenter = topic
@@ -472,167 +482,298 @@ func main() {
 
 			}
 
-			if dateString != "" {
-				// Case provide dateString
-				for wi, workflow := range allUsageRepos[i].Workflows {
-					idx := slices.IndexFunc(allUsageRepos[i].WorkflowRuns, func(wr *UsageWorkflowRun) bool { return wr.WorkflowID == workflow.ID })
-					if !verbose {
-						fmt.Printf("\033[2K\rRepos: %d/%d - WorkflowUsage: %d/%d", i+1, len(allRepos), wi, len(allUsageRepos[i].Workflows))
-
-					} else if verbose {
-						if idx == -1 {
-							log.Printf("SKIP Workflow: %s", workflow.Path)
-						} else if idx > -1 {
-							log.Printf("Get WorkflowUsage for workflow: %s", workflow.Path)
-						}
-
-					}
-
-					if idx > -1 {
-						runs := 0
-						qty_ubuntu := 0
-						qty_windows := 0
-						qty_macos := 0
-						for _, run := range allUsageRepos[i].WorkflowRuns {
-							if run.WorkflowID == workflow.ID {
-								runs += 1
-
-								if verbose {
-									log.Printf("Get WorkflowRunUsage for RunID: %d", run.ID)
-								}
-								checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
-
-								var workflowRunUsage *github.WorkflowRunUsage
-
-								workflowRunUsage, res, _ = client.Actions.GetWorkflowRunUsageByID(ctx, orgName, repo.Name, run.ID)
-
-								billable := workflowRunUsage.GetBillable()
-								// fmt.Println(workflowRunUsage.GetBillable())
-								if val, ok := (*billable)["UBUNTU"]; ok {
-									qty_ubuntu += int(val.GetTotalMS() / 60000)
-
-								}
-								if val, ok := (*billable)["WINDOWS"]; ok {
-									qty_windows += int(val.GetTotalMS() / 60000)
-
-								}
-								if val, ok := (*billable)["MACOS"]; ok {
-									qty_macos += int(val.GetTotalMS() / 60000)
-
-								}
-
-							}
-						}
-
-						var resultData ResultData
-
-						resultData.Date = today
-						resultData.Owner = owner
-						resultData.Product = "Action"
-						resultData.UnitType = "minute"
-						resultData.CostCenter = CostCenter
-						resultData.Project = Project
-						resultData.RepositorySlug = allUsageRepos[i].Name
-
-						file_name := strings.TrimRight(workflow.Path, "/")
-						file_name = strings.Split(file_name, "/")[len(strings.Split(file_name, "/"))-1]
-
-						resultData.ActionsWorkflow = file_name
-						resultData.Runs = runs
-
-						if qty_ubuntu > 0 {
-							resultData.Multiplier = 1
-							resultData.SKU = "Compute - UBUNTU"
-							resultData.Quantity = int64(qty_ubuntu)
-							allResultData = append(allResultData, &resultData)
-
-						}
-						if qty_windows > 0 {
-							resultData.Multiplier = 2
-							resultData.SKU = "Compute - WINDOWS"
-							resultData.Quantity = int64(qty_windows)
-							allResultData = append(allResultData, &resultData)
-
-						}
-						if qty_macos > 0 {
-							resultData.Multiplier = 10
-							resultData.SKU = "Compute - MACOS"
-							resultData.Quantity = int64(qty_macos)
-							allResultData = append(allResultData, &resultData)
-
-						}
-
-					}
+			if !includeNoTags && CostCenter == "N/a" && Project == "N/a" {
+				if verbose {
+					log.Printf("Get[%d]: %s --- SKIP NO TOPICS", i, repo.FullName)
 				}
 
 			} else {
-				// Case datestring not provide use current date
-				for wi, workflow := range allUsageRepos[i].Workflows {
-					if !verbose {
-						fmt.Printf("\033[2K\rRepos: %d/%d - WorkflowUsage: %d/%d", i+1, len(allRepos), wi, len(allUsageRepos[i].Workflows))
+
+				if verbose {
+					log.Printf("Get[%d]: %s", i, repo.FullName)
+				} else if !silent {
+					fmt.Printf("\033[2K\rRepos: %d/%d", i+1, len(allUsageRepos))
+				}
+
+				page := 0
+				for {
+					if verbose {
+						log.Printf("Listing workflows for: %s page: %d", repo.FullName, page)
+					} else if !silent {
+						fmt.Printf("\033[2K\rRepos: %d/%d - Listing workflows: %d", i+1, len(allUsageRepos), page)
+					}
+					checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
+
+					var wkflow *github.Workflows
+					opts := &github.ListOptions{Page: page, PerPage: 100}
+					if orgName != "" {
+						wkflow, res, err = client.Actions.ListWorkflows(ctx, orgName, repo.Name, opts)
 
 					}
-					idx := slices.IndexFunc(allUsageRepos[i].WorkflowRuns, func(wr *UsageWorkflowRun) bool { return wr.WorkflowID == workflow.ID })
-					if idx > -1 {
-						if verbose {
-							log.Printf("Get WorkflowUsage for: %s", workflow.Path)
+
+					if userName != "" {
+						realOwner := userName
+						if userName != repo.Owner.Login {
+							realOwner = repo.Owner.Login
 						}
+						wkflow, res, err = client.Actions.ListWorkflows(ctx, realOwner, repo.Name, opts)
 
-						checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
+					}
 
-						runs := 0
-						for _, run := range allUsageRepos[i].WorkflowRuns {
-							if run.WorkflowID == workflow.ID {
-								runs += 1
+					if err != nil {
+						log.Print(err)
+						useNextToken(tokens, &tokenIdx, &client, ctx, verbose)
+						// i--
+						continue
+					}
+
+					for _, w := range wkflow.Workflows {
+						var wflow *UsageWorkflow
+						jsonData, _ := json.Marshal(w)
+						err = json.Unmarshal(jsonData, &wflow)
+						if err != nil {
+							log.Fatal(err)
+						}
+						allUsageRepos[i].Workflows = append(allUsageRepos[i].Workflows, wflow)
+
+					}
+
+					if res.NextPage == 0 {
+						break
+					}
+
+					// break
+					page = res.NextPage
+				}
+
+				if verbose {
+					log.Printf("Found %d workflows for %s", len(allUsageRepos[i].Workflows), repo.FullName)
+				}
+
+				workflowRuns := []*github.WorkflowRun{}
+
+				page = 0
+				for {
+					checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
+
+					opts := &github.ListWorkflowRunsOptions{Created: createdQuery, ListOptions: github.ListOptions{Page: page, PerPage: 100}}
+
+					var runs *github.WorkflowRuns
+					if verbose {
+						log.Printf("Listing workflow runs for: %s page %d", repo.FullName, page)
+					} else if !silent {
+						fmt.Printf("\033[2K\rRepos: %d/%d - Listing workflow runs: %d", i+1, len(allRepos), page)
+					}
+
+					if orgName != "" {
+						runs, res, err = client.Actions.ListRepositoryWorkflowRuns(ctx, orgName, repo.Name, opts)
+
+					}
+					if userName != "" {
+						realOwner := userName
+						// if user is a member of repository
+						if userName != repo.Owner.Login {
+							realOwner = repo.Owner.Login
+						}
+						runs, res, err = client.Actions.ListRepositoryWorkflowRuns(ctx, realOwner, repo.Name, opts)
+
+					}
+
+					if err != nil {
+						log.Print(err)
+						useNextToken(tokens, &tokenIdx, &client, ctx, verbose)
+
+					}
+
+					workflowRuns = append(workflowRuns, runs.WorkflowRuns...)
+
+					if len(workflowRuns) == 0 {
+						break
+					}
+
+					if res.NextPage == 0 {
+						break
+					}
+
+					page = res.NextPage
+				}
+				if verbose {
+					log.Printf("Found %d workflow runs for %s/%s", len(workflowRuns), owner, repo.Name)
+				}
+
+				record, _ := json.Marshal(workflowRuns)
+				var usageWorkflows []*UsageWorkflowRun
+				json.Unmarshal([]byte(record), &usageWorkflows)
+				allUsageRepos[i].WorkflowRuns = usageWorkflows
+
+				if dateString != "" {
+					// Case provide dateString
+					for wi, workflow := range allUsageRepos[i].Workflows {
+						idx := slices.IndexFunc(allUsageRepos[i].WorkflowRuns, func(wr *UsageWorkflowRun) bool { return wr.WorkflowID == workflow.ID })
+						if !verbose {
+							fmt.Printf("\033[2K\rRepos: %d/%d - WorkflowUsage: %d/%d", i+1, len(allRepos), wi, len(allUsageRepos[i].Workflows))
+
+						} else if verbose {
+							if idx == -1 {
+								log.Printf("SKIP Workflow: %s", workflow.Path)
+							} else if idx > -1 {
+								log.Printf("Get WorkflowUsage for workflow: %s", workflow.Path)
 							}
+
 						}
 
-						var workflowUsage *github.WorkflowUsage
+						if idx > -1 {
+							runs := 0
+							qty_ubuntu := 0
+							qty_windows := 0
+							qty_macos := 0
+							for _, run := range allUsageRepos[i].WorkflowRuns {
+								if run.WorkflowID == workflow.ID {
+									runs += 1
 
-						workflowUsage, res, _ = client.Actions.GetWorkflowUsageByID(ctx, orgName, repo.Name, workflow.ID)
-						// log.Printf("***")
-						var resultData ResultData
+									if verbose {
+										log.Printf("Get WorkflowRunUsage for RunID: %d", run.ID)
+									}
+									checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
 
-						resultData.Date = today
-						resultData.Owner = owner
-						resultData.Product = "Action"
-						resultData.UnitType = "minute"
-						resultData.CostCenter = CostCenter
-						resultData.Project = Project
-						resultData.RepositorySlug = allUsageRepos[i].Name
+									var workflowRunUsage *github.WorkflowRunUsage
 
-						file_name := strings.TrimRight(workflow.Path, "/")
-						file_name = strings.Split(file_name, "/")[len(strings.Split(file_name, "/"))-1]
+									workflowRunUsage, res, _ = client.Actions.GetWorkflowRunUsageByID(ctx, orgName, repo.Name, run.ID)
 
-						resultData.ActionsWorkflow = file_name
-						resultData.Runs = runs
+									billable := workflowRunUsage.GetBillable()
+									// fmt.Println(workflowRunUsage.GetBillable())
+									if val, ok := (*billable)["UBUNTU"]; ok {
+										qty_ubuntu += int(val.GetTotalMS() / 60000)
 
-						billable := workflowUsage.GetBillable()
-						// fmt.Println(workflowRunUsage.GetBillable())
-						if val, ok := (*billable)["UBUNTU"]; ok {
-							resultData.Multiplier = 1
-							resultData.SKU = "Compute - UBUNTU"
-							resultData.Quantity = val.GetTotalMS() / 60000
-							if resultData.Quantity > 0 {
+									}
+									if val, ok := (*billable)["WINDOWS"]; ok {
+										qty_windows += int(val.GetTotalMS() / 60000)
+
+									}
+									if val, ok := (*billable)["MACOS"]; ok {
+										qty_macos += int(val.GetTotalMS() / 60000)
+
+									}
+
+								}
+							}
+
+							var resultData ResultData
+
+							resultData.Date = today
+							resultData.Owner = owner
+							resultData.Product = "Action"
+							resultData.UnitType = "minute"
+							resultData.CostCenter = CostCenter
+							resultData.Project = Project
+							resultData.RepositorySlug = allUsageRepos[i].Name
+
+							file_name := strings.TrimRight(workflow.Path, "/")
+							file_name = strings.Split(file_name, "/")[len(strings.Split(file_name, "/"))-1]
+
+							resultData.ActionsWorkflow = file_name
+							resultData.Runs = runs
+
+							if qty_ubuntu > 0 {
+								resultData.Multiplier = 1
+								resultData.SKU = "Compute - UBUNTU"
+								resultData.Quantity = int64(qty_ubuntu)
 								allResultData = append(allResultData, &resultData)
+
+							}
+							if qty_windows > 0 {
+								resultData.Multiplier = 2
+								resultData.SKU = "Compute - WINDOWS"
+								resultData.Quantity = int64(qty_windows)
+								allResultData = append(allResultData, &resultData)
+
+							}
+							if qty_macos > 0 {
+								resultData.Multiplier = 10
+								resultData.SKU = "Compute - MACOS"
+								resultData.Quantity = int64(qty_macos)
+								allResultData = append(allResultData, &resultData)
+
 							}
 
 						}
-						if val, ok := (*billable)["WINDOWS"]; ok {
-							resultData.Multiplier = 2
-							resultData.SKU = "Compute - WINDOWS"
-							resultData.Quantity = val.GetTotalMS()
-							if resultData.Quantity > 0 {
-								allResultData = append(allResultData, &resultData)
-							}
+					}
+
+				} else {
+					// Case datestring not provide use current date
+					for wi, workflow := range allUsageRepos[i].Workflows {
+						if !verbose {
+							fmt.Printf("\033[2K\rRepos: %d/%d - WorkflowUsage: %d/%d", i+1, len(allRepos), wi, len(allUsageRepos[i].Workflows))
 
 						}
-						if val, ok := (*billable)["MACOS"]; ok {
-							resultData.Multiplier = 10
-							resultData.SKU = "Compute - MACOS"
-							resultData.Quantity = val.GetTotalMS()
-							if resultData.Quantity > 0 {
-								allResultData = append(allResultData, &resultData)
+						idx := slices.IndexFunc(allUsageRepos[i].WorkflowRuns, func(wr *UsageWorkflowRun) bool { return wr.WorkflowID == workflow.ID })
+						if idx > -1 {
+							if verbose {
+								log.Printf("Get WorkflowUsage for: %s", workflow.Path)
+							}
+
+							checkRateLimit(minRateLimit, tokens, &tokenIdx, &client, ctx, verbose)
+
+							runs := 0
+							for _, run := range allUsageRepos[i].WorkflowRuns {
+								if run.WorkflowID == workflow.ID {
+									runs += 1
+								}
+							}
+
+							var workflowUsage *github.WorkflowUsage
+
+							workflowUsage, res, err = client.Actions.GetWorkflowUsageByID(ctx, orgName, repo.Name, workflow.ID)
+							// log.Printf("***")
+
+							var resultData ResultData
+
+							resultData.Date = today
+							resultData.Owner = owner
+							resultData.Product = "Action"
+							resultData.UnitType = "minute"
+							resultData.CostCenter = CostCenter
+							resultData.Project = Project
+							resultData.RepositorySlug = allUsageRepos[i].Name
+
+							file_name := strings.TrimRight(workflow.Path, "/")
+							file_name = strings.Split(file_name, "/")[len(strings.Split(file_name, "/"))-1]
+
+							resultData.ActionsWorkflow = file_name
+							resultData.Runs = runs
+
+							if err != nil {
+								log.Print(err)
+							} else {
+								billable := workflowUsage.GetBillable()
+								// fmt.Println(workflowRunUsage.GetBillable())
+								if val, ok := (*billable)["UBUNTU"]; ok {
+									resultData.Multiplier = 1
+									resultData.SKU = "Compute - UBUNTU"
+									resultData.Quantity = val.GetTotalMS() / 60000
+									if resultData.Quantity > 0 {
+										allResultData = append(allResultData, &resultData)
+									}
+
+								}
+								if val, ok := (*billable)["WINDOWS"]; ok {
+									resultData.Multiplier = 2
+									resultData.SKU = "Compute - WINDOWS"
+									resultData.Quantity = val.GetTotalMS()
+									if resultData.Quantity > 0 {
+										allResultData = append(allResultData, &resultData)
+									}
+
+								}
+								if val, ok := (*billable)["MACOS"]; ok {
+									resultData.Multiplier = 10
+									resultData.SKU = "Compute - MACOS"
+									resultData.Quantity = val.GetTotalMS()
+									if resultData.Quantity > 0 {
+										allResultData = append(allResultData, &resultData)
+									}
+
+								}
 							}
 
 						}
@@ -867,6 +1008,7 @@ func useNextToken(tokens []string, tokenIdx *int, client **github.Client, ctx co
 		os.Exit(0)
 	}
 }
+
 func checkRateLimit(minRateLimit int, tokens []string, tokenIdx *int, client **github.Client, ctx context.Context, verbose bool) {
 	token := tokens[*tokenIdx]
 	auth := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(
