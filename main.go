@@ -1018,7 +1018,6 @@ func checkRateLimit(minRateLimit int, tokens []string, tokenIdx *int, client **g
 
 	chkrateLimit, _, err := newclient.RateLimits(ctx)
 	for {
-
 		if err != nil {
 			if *tokenIdx >= len(tokens)-1 {
 				log.Fatal(err)
@@ -1028,7 +1027,7 @@ func checkRateLimit(minRateLimit int, tokens []string, tokenIdx *int, client **g
 					log.Print(err)
 				}
 				useNextToken(tokens, tokenIdx, client, ctx, verbose)
-				newtokenIdx := *tokenIdx + 1
+				newtokenIdx := *tokenIdx
 				token := tokens[newtokenIdx]
 				auth := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(
 					&oauth2.Token{AccessToken: token},

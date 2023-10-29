@@ -1,15 +1,16 @@
 SOURCE_DIRS = main.go
 export GO111MODULE=on
-export LDFLAGS="-s -w"
 export VERSION=`git describe --tags`
 export BUILD=`date +%FT%T%z`
+export LDFLAGS="-s -w -X main.version=${VERSION} -X main.build=${BUILD}"
+
 
 .PHONY: all
 all: gofmt test build dist
 
 .PHONY: build
 build:
-	go build -ldflags "-X main.version=${VERSION} -X main.build=${BUILD}"
+	go build -ldflags $(LDFLAGS)
 
 .PHONY: gofmt
 gofmt:
