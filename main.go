@@ -759,7 +759,7 @@ func main() {
 								if val, ok := (*billable)["WINDOWS"]; ok {
 									resultData.Multiplier = 2
 									resultData.SKU = "Compute - WINDOWS"
-									resultData.Quantity = val.GetTotalMS()
+									resultData.Quantity = val.GetTotalMS() / 60000
 									if resultData.Quantity > 0 {
 										allResultData = append(allResultData, &resultData)
 									}
@@ -768,7 +768,7 @@ func main() {
 								if val, ok := (*billable)["MACOS"]; ok {
 									resultData.Multiplier = 10
 									resultData.SKU = "Compute - MACOS"
-									resultData.Quantity = val.GetTotalMS()
+									resultData.Quantity = val.GetTotalMS() / 60000
 									if resultData.Quantity > 0 {
 										allResultData = append(allResultData, &resultData)
 									}
