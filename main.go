@@ -198,7 +198,7 @@ func main() {
 
 		}
 
-		var overallResult = "Error"
+		var overallResult = "✅OK"
 		for idx, tk := range tokens {
 
 			// fmt.Printf("Token[%d]: \n", idx+1)
@@ -255,19 +255,22 @@ func main() {
 
 				}
 
-				// fmt.Printf("token expiration date: %s\n", expireTime)
-				// fmt.Printf("expiration in: %s\n", diff)
 			}
 
 			if diff <= 0 {
 				result = "❌Expired"
+				overallResult = "❌Expired"
 			} else if diff.Hours() > 0 && diff.Hours() < 72 {
 				result = "⚠️Warning"
-				if overallResult != "✅OK" {
+				if overallResult != "❌Expired" {
 					overallResult = "⚠️Warning"
+
 				}
+
 			} else {
-				overallResult = "✅OK"
+				if overallResult != "⚠️Warning" && overallResult != "❌Expired" {
+					overallResult = "✅OK"
+				}
 			}
 			if output == "tsv" {
 				fmt.Fprintf(w, "%d\t%s\t%s\t%.f\t%s\n", idx+1, statusCode, expireString, diff.Hours(), result)
