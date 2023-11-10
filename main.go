@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -167,7 +168,7 @@ func main() {
 			log.Fatal("token or tokens-file is required")
 
 		} else if tokensFile != "" {
-			tokenBytes, err := os.ReadFile(tokensFile)
+			tokenBytes, err := os.ReadFile(filepath.Clean(tokensFile))
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -279,7 +280,10 @@ func main() {
 			}
 
 		}
-		w.Flush()
+		err := w.Flush()
+		if err != nil {
+			fmt.Printf("Error: %s", err.Error())
+		}
 		if output == "tsv" {
 			fmt.Printf("\n----------------------\nOverall Result: %s\n----------------------\n", overallResult)
 
@@ -303,7 +307,7 @@ func main() {
 	}
 
 	if fromFile == "" && tokensFile != "" {
-		tokenBytes, err := os.ReadFile(tokensFile)
+		tokenBytes, err := os.ReadFile(filepath.Clean(tokensFile))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -368,7 +372,7 @@ func main() {
 		var cacheFile = "cache/" + today.Format(format) + ".json"
 		var data JsonData
 		if _, err := os.Stat(cacheFile); err == nil && !noCache {
-			jsonBytes, err := os.ReadFile(cacheFile)
+			jsonBytes, err := os.ReadFile(filepath.Clean(cacheFile))
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -431,7 +435,10 @@ func main() {
 				for _, repo := range repos {
 					record, _ := json.Marshal(repo)
 					var usageRepo UsageRepository
-					json.Unmarshal([]byte(record), &usageRepo)
+					err = json.Unmarshal([]byte(record), &usageRepo)
+					if err != nil {
+						fmt.Printf("Error: %s", err.Error())
+					}
 					allUsageRepos = append(allUsageRepos, &usageRepo)
 				}
 
@@ -606,7 +613,10 @@ func main() {
 
 				record, _ := json.Marshal(workflowRuns)
 				var usageWorkflows []*UsageWorkflowRun
-				json.Unmarshal([]byte(record), &usageWorkflows)
+				err = json.Unmarshal([]byte(record), &usageWorkflows)
+				if err != nil {
+					fmt.Printf("Error: %s", err.Error())
+				}
 				allUsageRepos[i].WorkflowRuns = usageWorkflows
 
 				if dateString != "" {
@@ -836,7 +846,7 @@ func main() {
 	} else if fromFile != "" {
 
 		// Read data from file
-		jsonBytes, err := os.ReadFile(fromFile)
+		jsonBytes, err := os.ReadFile(filepath.Clean(fromFile))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -889,7 +899,10 @@ func main() {
 			}
 
 		}
-		w.Flush()
+		err = w.Flush()
+		if err != nil {
+			fmt.Printf("Error: %s", err.Error())
+		}
 
 	} else if output == "tsv" {
 		fmt.Printf("\033[2K\r")
@@ -924,7 +937,10 @@ func main() {
 				)
 			}
 		}
-		w.Flush()
+		err = w.Flush()
+		if err != nil {
+			fmt.Printf("Error: %s", err.Error())
+		}
 
 	} else if output == "file" {
 		fmt.Printf("\033[2K\r")
@@ -937,7 +953,7 @@ func main() {
 		if dateString != "" {
 			reportFileName = "report-" + today.Format(format) + "-nonaccum.csv"
 		}
-		f, err := os.Create(reportFileName)
+		f, err := os.Create(filepath.Clean(reportFileName))
 		if err != nil {
 			fmt.Printf("Error: %s", err.Error())
 		}
