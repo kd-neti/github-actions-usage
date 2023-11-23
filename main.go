@@ -190,17 +190,17 @@ func main() {
 
 		w := tabwriter.NewWriter(os.Stdout, 4, 5, 1, ' ', tabwriter.TabIndent)
 		if output == "tsv" {
-			fmt.Fprintln(w, "Token\tCode\tExpireDate\tRemainHour\tResult")
-			fmt.Fprintln(w, "-----\t------\t-------------------------\t---------------------\t------")
+			fmt.Fprintln(w, "Token\tRet\tExpireDate\tRemainHour\tResult")
+			fmt.Fprintln(w, "---------\t----\t-------------------------\t---------------------\t------")
 
 		} else if output == "md" {
-			fmt.Fprintln(w, "|Token|Code|Expired Date|Remaining Hours|Result|")
+			fmt.Fprintln(w, "|Token|Ret|Expired Date|Remaining Hours|Result|")
 			fmt.Fprintln(w, "|---|---|---|---|---|")
 
 		}
 
 		var overallResult = "✅OK"
-		for idx, tk := range tokens {
+		for _, tk := range tokens {
 
 			// fmt.Printf("Token[%d]: \n", idx+1)
 			var statusCode = ""
@@ -274,9 +274,9 @@ func main() {
 				}
 			}
 			if output == "tsv" {
-				fmt.Fprintf(w, "%d\t%s\t%s\t%.f\t%s\n", idx+1, statusCode, expireString, diff.Hours(), result)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%.f\t%s\n", tk[0:3]+"..."+tk[len(tk)-3:], statusCode, expireString, diff.Hours(), result)
 			} else if output == "md" {
-				fmt.Fprintf(w, "|%d|%s|%s|%.f|%s|\n", idx+1, statusCode, expireString, diff.Hours(), result)
+				fmt.Fprintf(w, "|%s|%s|%s|%.f|%s|\n", tk[0:3]+"..."+tk[len(tk)-3:], statusCode, expireString, diff.Hours(), result)
 			}
 
 		}
